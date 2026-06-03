@@ -34,6 +34,5 @@ class Voter:
         def set_certificate(self, cert: x509.Certificate):
             """To save certificate given from CA """
             self.certificate = cert
-# ciao
 
 
