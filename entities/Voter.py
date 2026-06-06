@@ -22,6 +22,7 @@ class Voter:
     def get_public_key(self) -> RSAPublicKey:
         return self.public_key
 
+    #method to allow a voter to request a certificate
     def generate_certificate_request(self) -> CertificateSigningRequest:
         csr = x509.CertificateSigningRequestBuilder().subject_name(x509.Name([
             x509.NameAttribute(NameOID.COMMON_NAME, self.name),

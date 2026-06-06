@@ -45,7 +45,7 @@ class StateCA(Authority):
         ).not_valid_after(
             datetime.utcnow() + timedelta(days=1825)
         ).add_extension(
-            x509.BasicConstraints(ca=True, path_length=0), critical=True
+            x509.BasicConstraints(ca=True, path_length=0), critical=True  #ca = True since municipality must be able to sign certificates of voters
         ).sign(self._private_key, hashes.SHA256())
 
         return cert
