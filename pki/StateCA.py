@@ -49,3 +49,25 @@ class StateCA(Authority):
         ).sign(self._private_key, hashes.SHA256())
 
         return cert
+
+    def sign_authority_csr(self, csr: x509.CertificateSigningRequest) -> x509.Certificate:
+        """Firma il CSR di un'autorità end-entity (AE o AC).
+        A differenza di sign_municipality_csr, produce certificati con ca=False
+        poiché AE e AC non emettono certificati ad altri."""
+        cert = x509.CertificateBuilder().subject_name(
+            csr.subject
+        ).issuer_name(
+            self.certificate.subject
+        ).public_key(
+            csr.public_key()
+        ).serial_number(
+            x509.random_serial_number()
+        ).not_valid_before(
+            datetime.utcnow()
+        ).not_valid_after(
+            datetime.utcnow() + timedelta(days=365)
+        ).add_extension(
+            x509.BasicConstraints(ca=False, path_length=None), critical=True
+        ).sign(self._private_key, hashes.SHA256())
+
+        return cert

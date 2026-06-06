@@ -31,3 +31,16 @@ class Voter:
     def set_certificate(self, cert: x509.Certificate):
         """Salva il certificato x509 generato dalla CA"""
         self.certificate=cert
+
+    def verify_authority_certificate(self, authority_name: str, public_directory) -> bool:
+        """Recupera il certificato di un'autorità (AE o AC) dal PublicDirectory
+        e ne verifica crittograficamente l'autenticità (firma della StateCA).
+
+        Returns:
+            True se il certificato è presente e la firma è valida,
+            False altrimenti.
+        """
+        authority_cert = public_directory.get_authority(authority_name)
+        if authority_cert is None:
+            return False
+        return public_directory.verify_certificate(authority_cert)
