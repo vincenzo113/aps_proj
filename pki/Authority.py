@@ -4,7 +4,7 @@ from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-'''Base authority class to be inherited by State authority and the lower one'''
+# Base authority class to be inherited by State authority and the lower ones
 class Authority:
     def __init__(self, name: str):
         self.common_name = name

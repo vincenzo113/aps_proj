@@ -45,15 +45,15 @@ class StateCA(Authority):
         ).not_valid_after(
             datetime.utcnow() + timedelta(days=1825)
         ).add_extension(
-            x509.BasicConstraints(ca=True, path_length=0), critical=True  #ca = True since municipality must be able to sign certificates of voters
+            x509.BasicConstraints(ca=True, path_length=0), critical=True  # ca=True since municipality must be able to sign certificates of voters
         ).sign(self._private_key, hashes.SHA256())
 
         return cert
 
     def sign_authority_csr(self, csr: x509.CertificateSigningRequest) -> x509.Certificate:
-        """Firma il CSR di un'autorità end-entity (AE o AC).
-        A differenza di sign_municipality_csr, produce certificati con ca=False
-        poiché AE e AC non emettono certificati ad altri."""
+        """Signs the CSR of an end-entity authority (Electoral Authority or Counting Authority).
+        Unlike sign_municipality_csr, it produces certificates with ca=False
+        since Electoral and Counting Authorities do not issue certificates to others."""
         cert = x509.CertificateBuilder().subject_name(
             csr.subject
         ).issuer_name(

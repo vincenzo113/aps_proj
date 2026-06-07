@@ -1,146 +1,274 @@
+"""
+Simulazione del protocollo di voto elettronico.
+
+Fasi:
+  0. PKI Setup (StateCA, MunicipalityCA)
+  1. Creazione Autorità (EA, CA)
+  2. Pubblicazione certificati nel PublicDirectory
+  3. Elettore verifica i certificati delle autorità
+  4. Security test — Autorità con CA fasulla
+  5. Autenticazione elettore (MunicipalityCA → certificato)
+  6. Protocollo di invio scheda di voto (referendum SI/NO)
+     + Security tests: double voting, firma manomessa, CA non registrata
+"""
+
+import base64 as _b64
+
 from cryptography.hazmat._oid import NameOID
 
 from archive.PublicDirectory import PublicDirectory
 from entities.Voter import Voter
-from entities.AutoritaElettorale import AutoritaElettorale
-from entities.AutoritaConteggio import AutoritaConteggio
+from entities.ElectoralAuthority import ElectoralAuthority, InvalidBallotRequest, InvalidBallotSubmission
+from entities.CountingAuthority import CountingAuthority
 from pki.StateCA import StateCA
 from pki.MunicipalityCA import MunicipalityCA
 
 # ============================================================
-# FASE 0: Setup della PKI
+# PHASE 0: PKI Setup
 # ============================================================
 print("=" * 60)
-print("FASE 0: Setup della PKI")
+print("PHASE 0: PKI Setup")
 print("=" * 60)
 
-# Creazione della CA radice (Stato)
 state_ca = StateCA("Italy")
-print(f"✅ StateCA '{state_ca.common_name}' creata (certificato auto-firmato)")
+print(f"✅ StateCA '{state_ca.common_name}' created (self-signed certificate)")
 
-# Creazione della CA comunale
-comune = MunicipalityCA("Vietri Sul Mare", state_ca)
-print(f"✅ MunicipalityCA '{comune.common_name}' creata (certificato firmato da StateCA)")
+municipality = MunicipalityCA("Vietri Sul Mare", state_ca)
+print(f"✅ MunicipalityCA '{municipality.common_name}' created (certificate signed by StateCA)")
 
 # ============================================================
-# FASE 1: Creazione delle Autorità (AE e AC)
+# PHASE 1: Creation of Authorities (EA and CA)
 # ============================================================
 print("\n" + "=" * 60)
-print("FASE 1: Creazione Autorità Elettorale (AE) e Autorità di Conteggio (AC)")
+print("PHASE 1: Creation of Electoral Authority (EA) and Counting Authority (CA)")
 print("=" * 60)
 
-# Creazione AE - Autorità Elettorale
-ae = AutoritaElettorale("Autorita Elettorale Nazionale", state_ca)
-print(f"✅ AE '{ae.common_name}' creata (certificato firmato da StateCA, ca=False)")
+ea = ElectoralAuthority("National Electoral Authority", state_ca)
+print(f"✅ EA '{ea.common_name}' created (certificate signed by StateCA, ca=False)")
 
-# Creazione AC - Autorità di Conteggio
-ac = AutoritaConteggio("Autorita di Conteggio Nazionale", state_ca)
-print(f"✅ AC '{ac.common_name}' creata (certificato firmato da StateCA, ca=False)")
+ca = CountingAuthority("National Counting Authority", state_ca)
+print(f"✅ CA '{ca.common_name}' created (certificate signed by StateCA, ca=False)")
 
 # ============================================================
-# FASE 2: Pubblicazione nel Public Directory
+# PHASE 2: Publication in the Public Directory
 # ============================================================
 print("\n" + "=" * 60)
-print("FASE 2: Pubblicazione certificati nel Public Directory")
+print("PHASE 2: Certificate publication in the Public Directory")
 print("=" * 60)
 
 pd = PublicDirectory()
 
-# Imposta il trust anchor (certificato root della StateCA)
 pd.set_root_ca(state_ca.certificate)
-print(f"✅ Root CA '{state_ca.common_name}' impostata come trust anchor")
+print(f"✅ Root CA '{state_ca.common_name}' set as trust anchor")
 
-# Pubblica il certificato del Comune
-pd.add_municipality(comune.certificate)
-print(f"✅ Certificato di '{comune.common_name}' pubblicato nel registro")
+pd.add_municipality(municipality.certificate)
+print(f"✅ Certificate of '{municipality.common_name}' published in the registry")
 
-# Pubblica i certificati delle autorità
-pd.add_authority(ae.certificate)
-print(f"✅ Certificato di AE '{ae.common_name}' pubblicato nel registro")
+pd.add_authority(ea.certificate)
+print(f"✅ EA Certificate '{ea.common_name}' published in the registry")
 
-pd.add_authority(ac.certificate)
-print(f"✅ Certificato di AC '{ac.common_name}' pubblicato nel registro")
+pd.add_authority(ca.certificate)
+print(f"✅ CA Certificate '{ca.common_name}' published in the registry")
 
 # ============================================================
-# FASE 3: L'elettore verifica i certificati delle autorità
+# PHASE 3: The voter verifies the authorities' certificates
 # ============================================================
 print("\n" + "=" * 60)
-print("FASE 3: L'elettore verifica i certificati di AE e AC")
+print("PHASE 3: The voter verifies EA and CA certificates")
 print("=" * 60)
 
 voter = Voter("Peppe")
-print(f"👤 Elettore '{voter.name}' creato")
+print(f"👤 Voter '{voter.name}' created")
 
-# L'elettore verifica il certificato dell'AE
-ae_valid = voter.verify_authority_certificate("Autorita Elettorale Nazionale", pd)
-if ae_valid:
-    print(f"✅ Elettore '{voter.name}': certificato AE verificato con successo (firma StateCA valida)")
+ea_valid = voter.verify_authority_certificate("National Electoral Authority", pd)
+if ea_valid:
+    print(f"✅ Voter '{voter.name}': EA certificate verified successfully (valid StateCA signature)")
 else:
-    print(f"❌ Elettore '{voter.name}': certificato AE NON valido!")
+    print(f"❌ Voter '{voter.name}': EA certificate INVALID!")
 
-# L'elettore verifica il certificato dell'AC
-ac_valid = voter.verify_authority_certificate("Autorita di Conteggio Nazionale", pd)
-if ac_valid:
-    print(f"✅ Elettore '{voter.name}': certificato AC verificato con successo (firma StateCA valida)")
+ca_valid = voter.verify_authority_certificate("National Counting Authority", pd)
+if ca_valid:
+    print(f"✅ Voter '{voter.name}': CA certificate verified successfully (valid StateCA signature)")
 else:
-    print(f"❌ Elettore '{voter.name}': certificato AC NON valido!")
+    print(f"❌ Voter '{voter.name}': CA certificate INVALID!")
 
 # ============================================================
-# FASE 4: Test con autorità falsa (CA non legittima)
+# PHASE 4: Security test (Fake Authority)
 # ============================================================
 print("\n" + "=" * 60)
-print("FASE 4: Test di sicurezza — Autorità con CA falsa")
+print("PHASE 4: Security Test — Authority with Fake CA")
 print("=" * 60)
 
-# Creiamo una StateCA falsa e un'autorità firmata da essa
-state_fake = StateCA("Stato Falso")
-ae_fake = AutoritaElettorale("AE Falsa", state_fake)
-print(f"⚠️  AE falsa creata: '{ae_fake.common_name}' (firmata da '{state_fake.common_name}')")
+fake_state = StateCA("Fake State")
+fake_ea = ElectoralAuthority("Fake EA", fake_state)
+print(f"⚠️  Fake EA created: '{fake_ea.common_name}' (signed by '{fake_state.common_name}')")
 
-# Proviamo a inserirla nel Public Directory e verificarla
-pd.add_authority(ae_fake.certificate)
-print(f"⚠️  Certificato AE falsa pubblicato nel registro")
+pd.add_authority(fake_ea.certificate)
+print(f"⚠️  Fake EA certificate published in the registry")
 
-# L'elettore prova a verificarla — deve fallire!
-ae_fake_valid = voter.verify_authority_certificate("AE Falsa", pd)
-if ae_fake_valid:
-    print(f"❌ ERRORE DI SICUREZZA: il certificato dell'AE falsa è stato accettato!")
+fake_ea_valid = voter.verify_authority_certificate("Fake EA", pd)
+if fake_ea_valid:
+    print(f"❌ SECURITY ERROR: Fake EA certificate was accepted!")
 else:
-    print(f"✅ Certificato AE falsa RIFIUTATO: la firma non corrisponde alla StateCA legittima")
+    print(f"✅ Fake EA certificate REJECTED: signature does not match the legitimate StateCA")
 
 # ============================================================
-# FASE 5: Autenticazione elettore (flusso esistente)
+# PHASE 5: Voter Authentication
 # ============================================================
 print("\n" + "=" * 60)
-print("FASE 5: Autenticazione dell'elettore tramite il Comune")
+print("PHASE 5: Voter authentication through the Municipality")
 print("=" * 60)
 
-# L'elettore genera CSR e ottiene certificato dal Comune
 csr = voter.generate_certificate_request()
-certificate = comune.sign_voter_csr(csr)
+certificate = municipality.sign_voter_csr(csr)
 voter.set_certificate(certificate)
-print(f"✅ Elettore '{voter.name}' ha ottenuto certificato da '{comune.common_name}'")
+print(f"✅ Voter '{voter.name}' obtained certificate from '{municipality.common_name}'")
 
-# Verifica della catena: chi ha firmato il certificato dell'elettore?
 issuer_name = voter.certificate.issuer.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
-comune_cert = pd.get_municipality(issuer_name)
+municipality_cert = pd.get_municipality(issuer_name)
 
-#verify the chain is correct starting from the voter cert and going up till the ROOT CA
-if pd.verify_certificate_chain(voter.certificate , comune_cert):
-    print(f"✅ CATENA RISALITA CORRETTAMENTE")
+if pd.verify_certificate_chain(voter.certificate, municipality_cert):
+    print(f"✅ CHAIN VERIFIED CORRECTLY")
 else:
-    print(f"❌ CATENA NON RISPETTATA CORRETTAMENTE")
+    print(f"❌ CHAIN NOT RESPECTED CORRECTLY")
 
 # ============================================================
-# Riepilogo
+# PHASE 6: Ballot Submission Protocol
+# Referendum: "Sei favorevole alla proposta di legge X?" (SI / NO)
 # ============================================================
 print("\n" + "=" * 60)
-print("RIEPILOGO: Stato pronto per lo scambio delle schede")
+print("PHASE 6: Ballot Submission — Referendum SI/NO")
 print("=" * 60)
-print(f"  🏛️  StateCA:    '{state_ca.common_name}'")
-print(f"  📋  AE:         '{ae.common_name}' — certificato verificato: {ae_valid}")
-print(f"  🔢  AC:         '{ac.common_name}' — certificato verificato: {ac_valid}")
-print(f"  🏘️  Comune:     '{comune.common_name}'")
-print(f"  👤  Elettore:   '{voter.name}' — autenticato e pronto")
-print(f"\n  ➡️  L'elettore conosce le chiavi pubbliche di AE e AC.")
-print(f"  ➡️  Si può procedere con lo scambio delle schede.")
+
+# L'elettore recupera pkAC dal PublicDirectory (certificati delle autorità sono pubblici)
+ac_public_key = pd.get_authority_public_key("National Counting Authority")
+ae_public_key  = ea.get_public_key()
+
+# ----------------------------------------------------------
+# Passo 1 — Richiesta scheda:  Enc(pkAE, ballot_request ‖ Cert_elettore)
+# ----------------------------------------------------------
+print("\n[Passo 1] Elettore → AE : Enc(pkAE, ballot_request ‖ Cert_elettore)")
+encrypted_request = voter.request_ballot(ae_public_key)
+print(f"  📨 Richiesta cifrata inviata ({len(encrypted_request)} byte)")
+
+# ----------------------------------------------------------
+# Passi 2-3 — AE verifica la catena → (schedavuota, σ_AE)
+# ----------------------------------------------------------
+print("\n[Passi 2-3] AE verifica catena → AE → Elettore : (schedavuota, σ_AE)")
+try:
+    blank_ballot_bytes, ae_signature = ea.receive_ballot_request(encrypted_request, pd)
+    print(f"  ✅ Catena certificato elettore verificata (Voter → MunicipalityCA → StateCA)")
+    print(f"  📋 Scheda vuota firmata da AE inviata all'elettore")
+except InvalidBallotRequest as exc:
+    print(f"  ❌ Richiesta rifiutata: {exc}")
+    raise SystemExit(1)
+
+# L'elettore verifica la firma AE sulla scheda vuota
+blank_ballot = voter.receive_blank_ballot(blank_ballot_bytes, ae_signature, ae_public_key)
+print(f"  ✅ Elettore ha verificato σ_AE sulla scheda vuota")
+print(f"  📋 Quesito referendario: \"{blank_ballot.question}\"")
+
+# ----------------------------------------------------------
+# Passo 4 — Compilazione e invio scheda
+#   schedacifrata        = Enc(pkAC, ballot)          [RSA-OAEP, dim. fissa]
+#   schedacifratacifrata = Enc(pkAE, schedacifrata ‖ voter_id)   [cifratura ibrida]
+#   σ                    = Sign(skEletore, schedacifratacifrata)
+#
+#   Messaggio: <IDelettore, schedacifratacifrata, σ>
+# ----------------------------------------------------------
+choice = "SI"
+print(f"\n[Passo 4] Elettore → AE : <IDelettore, Enc(pkAE, Enc(pkAC, ballot) ‖ ID), σ_elettore>")
+print(f"  Scelta: '{choice}'")
+submission_payload = voter.submit_ballot(choice, ae_public_key, ac_public_key)
+print(f"  📨 Payload di invio costruito")
+
+# ----------------------------------------------------------
+# Passi 5-7 — AE valida, registra e rilascia ricevuta
+# ----------------------------------------------------------
+print("\n[Passi 5-7] AE: verifica σ → controlla ID consumati → registra → ricevuta")
+try:
+    receipt = ea.receive_encrypted_ballot(submission_payload, voter.get_public_key(), ac_public_key)
+    print(f"  ✅ Vrfy(pkEletore, encrypted_payload, σ) = 1")
+    print(f"  ✅ ID elettore non presente nella lista 'consumati'")
+    print(f"  ✅ Dimensione crittogramma AC corretta ({ca.get_public_key().key_size // 8} byte)")
+    print(f"  ✅ ID aggiunto alla lista 'consumati'")
+    print(f"  📌 Scheda pubblicata su bacheca B  ({len(ea.bulletin_board)} voce/voci)")
+    print(f"  🧾 Ricevuta: Sign(skAE, Hash(Enc(pkAC, ballot)))  →  {len(receipt)} byte")
+except InvalidBallotSubmission as exc:
+    print(f"  ❌ Invio rifiutato: {exc}")
+    raise SystemExit(1)
+
+# L'elettore verifica la ricevuta
+receipt_valid = voter.verify_receipt(receipt, ae_public_key)
+print(f"\n  {'✅' if receipt_valid else '❌'} Verifica ricevuta: "
+      f"{'valida — voto registrato correttamente' if receipt_valid else 'NON VALIDA!'}")
+
+# ----------------------------------------------------------
+# Security Test A — Double voting (U.1)
+# ----------------------------------------------------------
+print("\n" + "-" * 50)
+print("Security Test A: Tentativo di voto doppio (U.1)")
+print("-" * 50)
+try:
+    ea.receive_encrypted_ballot(submission_payload, voter.get_public_key(), ac_public_key)
+    print("  ❌ ERRORE DI SICUREZZA: voto doppio accettato!")
+except InvalidBallotSubmission as exc:
+    print(f"  ✅ Voto doppio RIFIUTATO: {exc}")
+
+# ----------------------------------------------------------
+# Security Test B — Firma manomessa (I.1)
+# ----------------------------------------------------------
+print("\n" + "-" * 50)
+print("Security Test B: Firma manomessa sull'invio (I.1)")
+print("-" * 50)
+
+# Secondo elettore (diverso voter_id → nessun blocco per double-voting)
+voter2 = Voter("Mario")
+csr2 = voter2.generate_certificate_request()
+voter2.set_certificate(municipality.sign_voter_csr(csr2))
+
+tampered_payload = voter2.submit_ballot("NO", ae_public_key, ac_public_key)
+# Corrompe il primo byte della firma (base64-decodificata)
+raw_sig = _b64.b64decode(tampered_payload["signature"])
+corrupted_sig = bytes([raw_sig[0] ^ 0xFF]) + raw_sig[1:]
+tampered_payload["signature"] = _b64.b64encode(corrupted_sig).decode()
+
+try:
+    ea.receive_encrypted_ballot(tampered_payload, voter2.get_public_key(), ac_public_key)
+    print("  ❌ ERRORE DI SICUREZZA: firma manomessa accettata!")
+except InvalidBallotSubmission as exc:
+    print(f"  ✅ Firma manomessa RIFIUTATA: {exc}")
+
+# ----------------------------------------------------------
+# Security Test C — MunicipalityCA non registrata nel PublicDirectory
+# ----------------------------------------------------------
+print("\n" + "-" * 50)
+print("Security Test C: Elettore con certificato di CA non registrata")
+print("-" * 50)
+
+unknown_municipality = MunicipalityCA("Comune Sconosciuto", state_ca)  # non pubblicata in pd
+voter3 = Voter("Hacker")
+csr3 = voter3.generate_certificate_request()
+voter3.set_certificate(unknown_municipality.sign_voter_csr(csr3))
+
+forged_request = voter3.request_ballot(ae_public_key)
+try:
+    ea.receive_ballot_request(forged_request, pd)
+    print("  ❌ ERRORE DI SICUREZZA: catena non valida accettata!")
+except InvalidBallotRequest as exc:
+    print(f"  ✅ Richiesta RIFIUTATA: {exc}")
+
+# ============================================================
+# Summary
+# ============================================================
+print("\n" + "=" * 60)
+print("SUMMARY: Protocollo completato con successo")
+print("=" * 60)
+print(f"  🏛️  StateCA:       '{state_ca.common_name}'")
+print(f"  📋  EA:            '{ea.common_name}' — cert verificato: {ea_valid}")
+print(f"  🔢  AC:            '{ca.common_name}' — cert verificato: {ca_valid}")
+print(f"  🏘️  Municipality:  '{municipality.common_name}'")
+print(f"  👤  Voter:         '{voter.name}' — voto registrato ✓")
+print(f"  📌  Bacheca B:     {len(ea.bulletin_board)} scheda/e pubblicata/e")
+print(f"  🔒  ID consumati:  {len(ea._consumed_ids)}")
+print(f"\n  ✅  Fase 6 completata — pronto per il conteggio (CountingAuthority)")
