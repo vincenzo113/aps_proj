@@ -509,8 +509,398 @@ Il tempo per elettore si mantiene **sostanzialmente costante** tra 70 e 84 ms al
 | **pki** | `Authority.py` | `Authority` | Classe base: generazione chiavi RSA-4096, gestione certificato |
 | **pki** | `StateCA.py` | `StateCA` | Root CA: cert auto-firmato, firma CSR per Comuni (`ca=True`) e Autorità (`ca=False`) |
 | **pki** | `MunicipalityCA.py` | `MunicipalityCA` | CA intermedia: richiede cert a StateCA, firma CSR degli elettori |
-| **entities** | `AutoritaElettorale.py` | `AutoritaElettorale` | AE: genera chiavi, ottiene cert firmato da StateCA |
-| **entities** | `AutoritaConteggio.py` | `AutoritaConteggio` | AC: genera chiavi, ottiene cert firmato da StateCA |
-| **entities** | `Voter.py` | `Voter` | Elettore: genera chiavi RSA-2048, CSR, verifica certificati autorità |
+| **entities** | `ElectoralAuthority.py` | `ElectoralAuthority` | AE: autentica elettori, distribuisce schede, registra voti sulla bacheca pubblica |
+| **entities** | `CountingAuthority.py` | `CountingAuthority` | AC: verifica firme AE, decifra schede con skAC, conteggia voti, pubblica risultato firmato |
+| **entities** | `Voter.py` | `Voter` | Elettore: genera chiavi RSA-2048, CSR, verifica certificati, compila e invia scheda cifrata |
+| **entities** | `Ballot.py` | `Ballot` | Scheda elettorale: serializzazione JSON, codifica voto `v ∈ {1, 0, -1}`, validazione |
+| **utils** | `crypto_utils.py` | — | Primitive crittografiche: RSA-OAEP, cifratura ibrida, RSA-PSS, SHA-256 |
 | **archive** | `PublicDirectory.py` | `PublicDirectory` | Registro pubblico: memorizza cert, verifica crittografica firme, verifica catena |
-| — | `example_run.py` | — | Script di simulazione: esegue tutte le fasi del protocollo |
+| — | `example_run.py` | — | Script di simulazione: esegue tutte le fasi del protocollo (Fasi 0–7) |
+
+---
+
+## 8. Fase di Scrutinio e Conteggio dei Voti
+
+Al termine della finestra di voto, l'Autorità di Conteggio (AC) avvia la fase di scrutinio. Questa fase è interamente implementata nella classe `CountingAuthority` attraverso il metodo `tally_votes()`, che esegue in sequenza le quattro sotto-fasi descritte nel protocollo (§2.3.1–2.3.4).
+
+La separazione tra la fase di raccolta (AE) e la fase di decifrazione (AC) costituisce il nucleo architetturale che garantisce la segretezza del voto: AE conosce l'identità dell'elettore ma non il contenuto del voto (cifrato con `pkAC`), mentre AC decifra i voti ma non può risalire all'identità di chi li ha espressi, poiché riceve solo schede cifrate anonime dalla bacheca pubblica.
+
+### 8.1 Panoramica del flusso di scrutinio
+
+```mermaid
+sequenceDiagram
+    participant B as 📌 Bacheca Pubblica AE
+    participant AC as 🔢 Autorità di Conteggio
+
+    rect rgb(26, 26, 46)
+    Note over B,AC: §2.3.1 — Prelievo schede dalla bacheca
+    AC->>B: Richiesta schede cifrate
+    B-->>AC: {schedacifrata_i, σAE_i} per i = 1..n
+    end
+
+    rect rgb(15, 52, 96)
+    Note over AC: §2.3.2 — Verifica autenticità
+    loop Per ogni scheda i
+        AC->>AC: h = SHA-256(schedacifrata_i)
+        AC->>AC: Vrfy(pkAE, σAE_i, h) =? 1
+        Note right of AC: Se Vrfy = 0 → anomalia,<br/>scheda scartata
+    end
+    end
+
+    rect rgb(22, 33, 62)
+    Note over AC: §2.3.3 — Decifrazione
+    loop Per ogni scheda verificata
+        AC->>AC: plaintext = RSA-OAEP-Dec(skAC, schedacifrata_i)
+        AC->>AC: ballot = Ballot.from_bytes(plaintext)
+        AC->>AC: v = ballot.to_vote_value()
+        Note right of AC: v ∈ {1, 0, -1}?<br/>Sì → conteggiata<br/>No → scartata
+    end
+    end
+
+    rect rgb(10, 60, 40)
+    Note over AC: §2.3.4 — Conteggio e pubblicazione
+    AC->>AC: conteggio SI / NO / NULLO
+    AC->>AC: payload = risultato || {schedecifrate}
+    AC->>AC: σAC = Sign(skAC, payload)
+    Note right of AC: Pubblicazione:<br/>⟨AC, payload, σAC⟩
+    end
+```
+
+### 8.2 Modello della scheda e codifica del voto
+
+La classe `Ballot` modella la scheda elettorale per un referendum a tre opzioni. La codifica del voto segue il formato definito nella sezione 2.2.2 del protocollo:
+
+| Scelta dell'elettore | Valore intero `v` | Campo `choice` | Descrizione |
+|---------------------|-------------------|----------------|-------------|
+| **Sì** | `1` | `"SI"` | Voto favorevole |
+| **No** | `0` | `"NO"` | Voto contrario |
+| **Astensione / Voto nullo** | `-1` | `"ASTENUTO"` o `None` | Voto non espresso |
+
+La conversione è implementata dal metodo `to_vote_value()`:
+
+```python
+def to_vote_value(self) -> int:
+    if self.choice is None:
+        return -1                          # scheda vuota = voto non espresso
+    return _CHOICE_TO_VALUE[self.choice]   # "SI" → 1, "NO" → 0, "ASTENUTO" → -1
+```
+
+La validazione in fase di scrutinio verifica che il valore decodificato appartenga all'insieme ammesso `v ∈ {1, 0, -1}`: schede che, una volta decifrate, producono un valore non appartenente a tale insieme vengono scartate dal conteggio.
+
+### 8.3 Verifica delle schede cifrate (§2.3.2)
+
+Prima di procedere alla decifrazione, AC verifica l'autenticità e l'integrità di ciascuna scheda cifrata prelevata dalla bacheca. Per ciascuna entry, AC ricalcola l'hash della scheda cifrata e verifica la firma digitale apposta da AE al momento della pubblicazione:
+
+$$\text{Vrfy}(pk_{AE},\ \sigma_{AE},\ \text{SHA-256}(\text{schedacifrata})) \stackrel{?}{=} 1$$
+
+```python
+ballot_hash = sha256(encrypted_ballot)
+if verify_pss(ae_signature, ballot_hash, ae_public_key):
+    verified_ballots.append(encrypted_ballot)
+else:
+    self.anomalies.append({
+        "index": idx,
+        "reason": "Firma AE non valida",
+        "type": "INVALID_AE_SIGNATURE",
+    })
+```
+
+Solo le schede per cui la verifica ha esito positivo vengono ammesse alla fase successiva. Schede prive di firma valida vengono scartate e registrate nell'attributo `self.anomalies`, che mantiene un log strutturato delle anomalie riscontrate. Questo controllo garantisce che AC elabori esclusivamente schede effettivamente registrate da AE, impedendo l'introduzione di schede fraudolente nella fase di conteggio (I.1, I.2).
+
+### 8.4 Decifrazione delle schede (§2.3.3)
+
+Per ciascuna scheda cifrata che ha superato la verifica della firma, AC esegue la decifrazione tramite la propria chiave privata `skAC`:
+
+$$\text{voto}_{\text{plain}} = \text{RSA-OAEP-Dec}(sk_{AC},\ \text{schedacifrata})$$
+
+```python
+plaintext = rsa_decrypt(encrypted_ballot, self._private_key)
+ballot = Ballot.from_bytes(plaintext)
+vote_value = ballot.to_vote_value()
+
+if vote_value not in VALID_VOTE_VALUES:
+    invalid_decryptions += 1
+    continue
+
+votes.append(vote_value)
+```
+
+AC è l'unica entità in possesso di `skAC`, che non è mai stata condivisa con AE né con alcun altro attore del sistema. La decifratura utilizza RSA-OAEP (SHA-256), lo stesso schema utilizzato dall'elettore in fase di cifratura. Il voto in chiaro viene deserializzato in un oggetto `Ballot` e convertito nel valore intero `v` tramite `to_vote_value()`. Schede che producono errori di decifratura o valori non validi vengono silenziosamente scartate e conteggiate come `invalid_decryptions`.
+
+### 8.5 Conteggio e pubblicazione del risultato (§2.3.4)
+
+Una volta decifrate tutte le schede valide, AC calcola il risultato finale aggregando i valori:
+
+```python
+count_si   = sum(1 for v in votes if v == 1)
+count_no   = sum(1 for v in votes if v == 0)
+count_null = sum(1 for v in votes if v == -1)
+```
+
+Il risultato viene quindi serializzato in un payload JSON che include sia i conteggi sia l'elenco completo delle schede cifrate originali, e firmato digitalmente con `skAC`:
+
+$$\sigma_{AC} = \text{Sign}(sk_{AC},\ \text{payload})$$
+
+$$\text{pubblicazione} = \langle AC,\ \text{payload},\ \sigma_{AC} \rangle$$
+
+```python
+payload_data = json.dumps({
+    "authority": self.common_name,
+    "result": risultato,
+    "encrypted_ballots": [base64.b64encode(eb).decode() for eb in all_encrypted_ballots],
+}).encode()
+
+ac_signature = sign_pss(payload_data, self._private_key)
+```
+
+La pubblicazione contestuale delle schede cifrate originali nel payload è un elemento di design cruciale: consente a qualsiasi osservatore esterno di effettuare la **verifica universale** (VU.1) del conteggio.
+
+### 8.6 Verifica Universale (VU.1)
+
+Il protocollo prevede che chiunque possa verificare la correttezza del conteggio pubblicato da AC, senza necessità di avere accesso a chiavi private. La verifica universale si articola in due controlli, implementati come metodi statici della classe `CountingAuthority`:
+
+```mermaid
+flowchart TD
+    A["🔍 Osservatore esterno"] --> B{"1. Vrfy(pkAC, σAC, payload)<br/>Firma di AC valida?"}
+
+    B -->|"Sì"| C{"2. Confronto schede<br/>payload AC ↔ bacheca AE<br/>Schede coincidono?"}
+    B -->|"No"| FAIL1["❌ Risultato non autentico<br/>Possibile manomissione"]
+
+    C -->|"Sì"| OK["✅ Conteggio verificato<br/>Nessuna scheda aggiunta/rimossa"]
+    C -->|"No"| FAIL2["❌ Incoerenza rilevata<br/>Schede aggiunte o rimosse"]
+
+    style A fill:#1a1a2e,stroke:#e94560,color:#fff
+    style B fill:#0f3460,stroke:#53a8b6,color:#fff
+    style C fill:#0f3460,stroke:#53a8b6,color:#fff
+    style OK fill:#1b4332,stroke:#40916c,color:#fff
+    style FAIL1 fill:#641220,stroke:#e5383b,color:#fff
+    style FAIL2 fill:#641220,stroke:#e5383b,color:#fff
+```
+
+**Passo 1 — Verifica della firma di AC** (`verify_tally`): l'osservatore recupera la chiave pubblica di AC dal `PublicDirectory` e verifica che la firma RSA-PSS sul payload sia autentica. Questo garantisce che il risultato sia stato effettivamente prodotto da AC e non sia stato alterato successivamente.
+
+```python
+@staticmethod
+def verify_tally(signed_payload, ac_signature, ac_public_key) -> bool:
+    return verify_pss(ac_signature, signed_payload, ac_public_key)
+```
+
+**Passo 2 — Confronto delle schede cifrate** (`verify_ballot_consistency`): l'osservatore estrae le schede cifrate dal payload firmato da AC e le confronta, una per una, con quelle presenti sulla bacheca pubblica di AE. La verifica controlla sia la cardinalità (nessuna scheda aggiunta o rimossa) sia il contenuto esatto (nessuna scheda sostituita).
+
+```python
+@staticmethod
+def verify_ballot_consistency(signed_payload, bulletin_board) -> bool:
+    payload_data = json.loads(signed_payload.decode())
+    payload_ballots = [base64.b64decode(eb) for eb in payload_data["encrypted_ballots"]]
+    board_ballots = [entry["encrypted_ballot"] for entry in bulletin_board]
+
+    if len(payload_ballots) != len(board_ballots):
+        return False
+    return all(pb == bb for pb, bb in zip(payload_ballots, board_ballots))
+```
+
+Inoltre, siamo sicuri che le schede presenti sulla bacheca non siano state alterate, in quanto AE — prima di accettare la scheda come votazione corretta — verifica l'integrità di quest'ultima utilizzando la firma apposta dall'elettore (cfr. §2.2).
+
+### 8.7 Verifica Individuale
+
+Il protocollo garantisce la **verificabilità individuale**: ogni elettore può accertarsi che il proprio voto sia stato effettivamente conteggiato da AC senza comprometterne la segretezza.
+
+Al momento della sottomissione del voto, l'elettore ha ricevuto da AE una ricevuta, costituita dalla firma digitale di AE sull'hash della propria scheda cifrata:
+
+$$\text{ricevuta} = \text{Sign}(sk_{AE},\ \text{Hash}(\text{schedacifrata}))$$
+
+AC include nel proprio payload pubblicato non solo i risultati del conteggio e le schede cifrate, ma anche l'elenco delle firme di AE associate a tali schede (esattamente le ricevute). L'elettore può quindi verificare in modo autonomo la presenza della propria ricevuta nella lista.
+
+```mermaid
+flowchart TD
+    E["👤 Elettore"] -->|Possiede| R["🧾 Ricevuta: Sign(skAE, Hash(scheda))"]
+    E -->|Scarica| P["📦 Payload Pubblicato da AC"]
+    P -->|Contiene| L["📋 Lista firme AE"]
+    R --> C{"Ricerca nella lista"}
+    L --> C
+    C -->|"Trovata"| OK["✅ Il voto è stato regolarmente scrutinato"]
+    C -->|"Non trovata"| FAIL["❌ Il voto è stato scartato o alterato"]
+
+    style E fill:#1a1a2e,stroke:#e94560,color:#fff
+    style R fill:#0f3460,stroke:#53a8b6,color:#fff
+    style P fill:#0f3460,stroke:#53a8b6,color:#fff
+    style OK fill:#1b4332,stroke:#40916c,color:#fff
+    style FAIL fill:#641220,stroke:#e5383b,color:#fff
+```
+
+Il metodo `verify_individual` di `CountingAuthority` implementa questo controllo, verificando che i byte della ricevuta dell'elettore siano presenti all'interno dell'array `ae_signatures` del payload decodificato:
+
+```python
+@staticmethod
+def verify_individual(receipt: bytes, signed_payload: bytes) -> bool:
+    payload_data = json.loads(signed_payload.decode())
+    published_signatures = [base64.b64decode(sig) for sig in payload_data["ae_signatures"]]
+    return receipt in published_signatures
+```
+
+### 8.8 Classe `CountingAuthority` — Interfaccia completa
+
+La tabella seguente riassume l'interfaccia della classe dopo l'implementazione della fase di scrutinio:
+
+| Attributo / Metodo | Visibilità | §Protocollo | Descrizione |
+|---------------------|------------|-------------|-------------|
+| `_private_key` | Privato | §2.3.1 | Chiave privata RSA-4096 (`skAC`). Unica copia nel sistema, mai condivisa con AE |
+| `certificate` | Pubblico | — | Certificato X.509 firmato dalla StateCA (`ca=False`) |
+| `anomalies` | Pubblico | §2.3.2 | Lista di anomalie riscontrate durante l'ultimo scrutinio |
+| `get_public_key()` | Pubblico | — | Restituisce `pkAC` per la verifica universale |
+| `tally_votes(bulletin_board, ae_public_key)` | Pubblico | §2.3.2–2.3.4 | Esegue l'intero scrutinio: verifica firme, decifra, conteggia, pubblica risultato firmato |
+| `verify_tally(payload, σ, pkAC)` | Statico | §2.3.4 (VU.1) | Verifica la firma di AC sul risultato pubblicato |
+| `verify_ballot_consistency(payload, board)` | Statico | §2.3.4 (VU.1) | Confronta le schede nel payload AC con la bacheca AE |
+
+```mermaid
+classDiagram
+    class CountingAuthority {
+        +common_name : str
+        -_private_key : RSAPrivateKey
+        +certificate : Certificate
+        +anomalies : list~dict~
+        +get_public_key() RSAPublicKey
+        +tally_votes(bulletin_board, ae_public_key) dict
+        +verify_tally(payload, signature, public_key)$ bool
+        +verify_ballot_consistency(payload, board)$ bool
+    }
+
+    class Ballot {
+        +question : str
+        +choice : Optional~str~
+        +to_bytes() bytes
+        +from_bytes(data)$ Ballot
+        +to_vote_value() int
+        +choice_from_value(value)$ str
+        +is_blank() bool
+        +is_valid() bool
+    }
+
+        +verify_individual(receipt, payload)$ bool
+    }
+
+    CountingAuthority ..> Ballot : decifra e converte
+```
+
+### 8.9 Test di sicurezza della fase di scrutinio
+
+La simulazione (`example_run.py`, PHASE 7) include due test specifici per la fase di scrutinio:
+
+#### Test D — Scheda fraudolenta iniettata nella bacheca (I.1, I.2)
+
+Un attaccante tenta di iniettare una scheda cifrata fasulla (512 byte casuali) con una firma AE inventata nella bacheca pubblica. Quando AC esegue lo scrutinio sulla bacheca manomessa:
+
+1. La verifica `Vrfy(pkAE, σAE_fasulla, Hash(scheda_fasulla))` **fallisce**
+2. La scheda viene registrata come anomalia e **scartata** dal conteggio
+3. Il conteggio delle schede legittime resta **inalterato**
+
+Questo dimostra che la firma digitale di AE sulle schede agisce come meccanismo anti-contraffazione: è impossibile introdurre schede nel sistema senza che AE le abbia effettivamente registrate.
+
+#### Test E — Manomissione del risultato firmato da AC
+
+Un avversario intercetta il payload firmato da AC e ne altera un singolo byte (bit flip). Quando un osservatore esterno esegue la verifica universale:
+
+$$\text{Vrfy}(pk_{AC},\ \sigma_{AC},\ \text{payload\_alterato}) = 0$$
+
+La firma RSA-PSS rileva la manomissione, restituendo esito negativo. Questo dimostra che qualsiasi alterazione del risultato pubblicato — anche minima — viene immediatamente rilevata dalla verifica crittografica.
+
+> [!NOTE]
+> Entrambi i test confermano le proprietà di integrità (I.1, I.2) e verificabilità universale (VU.1) dichiarate nel protocollo: il sistema è robusto sia contro l'inserimento di schede fraudolente sia contro la manomissione dei risultati.
+
+### 8.10 Costo Computazionale e Scalabilità dello Scrutinio
+
+I dati riportati in questa sezione sono stati raccolti eseguendo `benchmark_scrutinio.py` sulla macchina di sviluppo (Windows, Intel). Ogni misura è stata ripetuta per un numero variabile di iterazioni (100–1000) e si riportano media, mediana, deviazione standard, minimo e massimo.
+
+#### 8.10.1 Costo delle singole operazioni crittografiche
+
+| Operazione | Media | Mediana | σ | Min | Max | Iter. |
+|------------|-------|---------|---|-----|-----|-------|
+| SHA-256(schedacifrata) — 512 byte | **< 0,01 ms** | 0,00 ms | 0,00 ms | 0,00 ms | 0,02 ms | 1000 |
+| Vrfy(pkAE, σAE, Hash(scheda)) — RSA-PSS 4096 | **0,06 ms** | 0,06 ms | 0,01 ms | 0,06 ms | 0,10 ms | 100 |
+| Vrfy(pkAE, σ_falsa, Hash(scheda)) — deve fallire | **0,08 ms** | 0,07 ms | 0,03 ms | 0,06 ms | 0,31 ms | 100 |
+| RSA-OAEP-Dec(skAC, schedacifrata) — 4096 bit | **1,53 ms** | 1,43 ms | 0,37 ms | 1,28 ms | 3,40 ms | 100 |
+| Ballot.from_bytes() + to_vote_value() | **< 0,01 ms** | 0,00 ms | 0,00 ms | 0,00 ms | 0,02 ms | 1000 |
+| Sign(skAC, payload) — RSA-PSS 4096 | **1,59 ms** | 1,47 ms | 0,32 ms | 1,28 ms | 2,68 ms | 50 |
+| Vrfy(pkAC, σAC, payload) — RSA-PSS 4096 | **0,08 ms** | 0,07 ms | 0,03 ms | 0,06 ms | 0,24 ms | 100 |
+
+L'operazione dominante è la **decifrazione RSA-OAEP** con chiave privata a 4096 bit (~1,53 ms), che è circa **20× più lenta** della verifica della firma (~0,06 ms). Questo è coerente con la teoria: la decifratura richiede l'esponenziazione modulare con l'esponente privato (grande), mentre la verifica usa l'esponente pubblico e=65537 (solo 17 moltiplicazioni modulari). Le operazioni di hashing e deserializzazione sono trascurabili (< 0,01 ms).
+
+#### 8.10.2 Dimensione dei messaggi della fase di scrutinio
+
+**Singoli componenti**
+
+| Messaggio | Dimensione |
+|-----------|-----------|
+| Scheda cifrata — Enc(pkAC, ballot) — RSA-OAEP | **512 byte** |
+| Firma AE su scheda (σAE) — RSA-PSS 4096 | **512 byte** |
+| Hash SHA-256(schedacifrata) | **32 byte** |
+| Entry bacheca (scheda + firma AE) | **1.024 byte** |
+| Bacheca completa (4 schede) | **4.096 byte** |
+
+**Pubblicazione risultato AC**
+
+| Messaggio | Dimensione |
+|-----------|-----------|
+| Payload firmato AC (risultato + schede cifrate in base64) | **2.971 byte** |
+| Firma AC sul payload (σAC) — RSA-PSS 4096 | **512 byte** |
+| **TOTALE pubblicazione AC** | **3.483 byte** |
+
+**Stima scalabilità dimensionale**
+
+| N. schede | Payload stimato |
+|-----------|----------------|
+| 10 | ~7,6 KB |
+| 50 | ~34,5 KB |
+| 100 | ~68,3 KB |
+| 1.000 | ~676,5 KB |
+
+La dimensione del payload cresce **linearmente** con il numero di schede, poiché ciascuna scheda cifrata occupa un blocco RSA fisso di 512 byte (codificato in base64 nel JSON: ~693 byte). Per elezioni con 1.000 elettori, il payload pubblicato rimane sotto i 700 KB — una dimensione facilmente gestibile anche con connessioni a bassa larghezza di banda.
+
+#### 8.10.3 Latenza delle operazioni di verifica
+
+| Operazione | §Protocollo | Media | Mediana | σ |
+|------------|-------------|-------|---------|---|
+| Verifica singola scheda (SHA-256 + Vrfy PSS) | §2.3.2 | **0,09 ms** | 0,08 ms | 0,04 ms |
+| Decifrazione singola (Dec + from_bytes + to_vote) | §2.3.3 | **1,59 ms** | 1,46 ms | 0,42 ms |
+| Verifica firma AC (Vrfy universale) | §2.3.4 | **0,07 ms** | 0,06 ms | 0,02 ms |
+| Confronto schede (payload AC ↔ bacheca AE) | §2.3.4 | **0,02 ms** | 0,01 ms | 0,01 ms |
+| **Verifica universale completa (VU.1)** | §2.3.4 | **0,11 ms** | 0,09 ms | 0,05 ms |
+| **Verifica individuale (Ricerca ricevuta)** | §2.3.4 | **0,01 ms** | 0,01 ms | 0,01 ms |
+
+Il costo di verifica di una singola scheda (~0,09 ms) è **trascurabile** rispetto alla decifrazione (~1,59 ms). Questo significa che il bottleneck dello scrutinio è la decifratura RSA-OAEP, non la verifica delle firme AE. La verifica universale completa (VU.1) richiede solo ~0,11 ms indipendentemente dal numero di schede per la componente di firma, più un costo lineare per il confronto scheda-per-scheda. La verifica individuale da parte dell'elettore è un'operazione istantanea di semplice ricerca.
+
+#### 8.10.4 Tempi end-to-end dello scrutinio
+
+| Configurazione | Tempo totale | Tempo per scheda |
+|----------------|-------------|-----------------|
+| Scrutinio completo (4 schede) | **7,97 ms** | **1,99 ms/scheda** |
+
+Il tempo end-to-end include: verifica di tutte le firme AE, decifrazione di tutte le schede, conteggio, serializzazione del payload e firma RSA-PSS. Il costo per scheda (~2 ms) è dominato dalla decifrazione RSA-OAEP (~1,53 ms, pari al ~77% del tempo totale).
+
+#### 8.10.5 Scalabilità
+
+| N. elettori | Scrutinio | ms/scheda | Verifica VU.1 | Totale | Payload |
+|-------------|-----------|-----------|---------------|--------|---------|
+| 10 | 18,93 ms | **1,89 ms** | 0,37 ms | 19,30 ms | 6,9 KB |
+| 50 | 89,63 ms | **1,79 ms** | 0,37 ms | 89,99 ms | 33,8 KB |
+| 100 | 172,82 ms | **1,73 ms** | 0,85 ms | 173,67 ms | 67,4 KB |
+
+Il tempo per scheda si mantiene **sostanzialmente costante** tra 1,73 e 1,89 ms al variare del carico (10–100 elettori), confermando la complessità **O(n)** lineare nel numero di schede. Il leggero miglioramento al crescere di n è attribuibile all'ammortamento del costo fisso della firma AC sul risultato. La verifica universale (VU.1) resta sotto 1 ms anche con 100 schede.
+
+Su una singola macchina, il sistema è in grado di processare circa **550–580 schede/secondo** nella fase di scrutinio — un throughput sufficiente per elezioni locali e municipali.
+
+#### 8.10.6 Riepilogo e considerazioni
+
+| Categoria | Valore chiave | Nota |
+|-----------|--------------|------|
+| SHA-256 (hash scheda) | < 0,01 ms | Trascurabile |
+| Verifica firma AE (RSA-PSS 4096) | ~0,06 ms | Operazione rapida (esponente pubblico) |
+| **Decifrazione RSA-OAEP 4096** | **~1,53 ms** | **Bottleneck** dello scrutinio (~77% del tempo) |
+| Firma AC risultato (RSA-PSS 4096) | ~1,59 ms | Costo fisso, una tantum |
+| Verifica universale (VU.1) | ~0,11 ms | Istantanea per un osservatore |
+| Costo per scheda (end-to-end) | ~1,8 ms | Dominato dalla decifrazione |
+| Throughput scrutinio | ~550 schede/sec | Su singola macchina |
+| Payload per 100 schede | ~67 KB | Crescita lineare |
+
+> [!NOTE]
+> Il bottleneck dello scrutinio è la decifrazione RSA-OAEP con chiave a 4096 bit. In un sistema di produzione, questo costo potrebbe essere ridotto utilizzando un HSM (Hardware Security Module) con accelerazione hardware per le operazioni di chiave privata, oppure adottando cifratura ibrida anche per le schede di voto (attualmente si usa RSA-OAEP diretto poiché la scheda è sufficientemente piccola — ~40 byte).
