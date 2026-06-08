@@ -175,8 +175,8 @@ class Voter:
         if self.certificate is None:
             raise ValueError("L'elettore non possiede un certificato.")
 
-        if choice not in {"SI", "NO"}:
-            raise ValueError(f"Scelta non valida '{choice}': deve essere 'SI' o 'NO'.")
+        if choice not in {"SI", "NO", "ASTENUTO"}:
+            raise ValueError(f"Scelta non valida '{choice}': deve essere 'SI', 'NO' o 'ASTENUTO'.")
 
         voter_id = str(self.certificate.serial_number)
 

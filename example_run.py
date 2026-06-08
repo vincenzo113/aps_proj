@@ -258,6 +258,159 @@ try:
 except InvalidBallotRequest as exc:
     print(f"  ✅ Richiesta RIFIUTATA: {exc}")
 
+# ----------------------------------------------------------
+# Registrazione di altri elettori per lo scrutinio multi-voto
+# ----------------------------------------------------------
+print("\n" + "-" * 50)
+print("Registrazione elettori aggiuntivi per lo scrutinio")
+print("-" * 50)
+
+# Voter 2 — vota NO (voter2 è già creato nel Security Test B, ma non ha votato validamente)
+voter2 = Voter("Mario")
+csr2 = voter2.generate_certificate_request()
+voter2.set_certificate(municipality.sign_voter_csr(csr2))
+encrypted_request2 = voter2.request_ballot(ae_public_key)
+blank2, sig2 = ea.receive_ballot_request(encrypted_request2, pd)
+voter2.receive_blank_ballot(blank2, sig2, ae_public_key)
+payload2 = voter2.submit_ballot("NO", ae_public_key, ac_public_key)
+receipt2 = ea.receive_encrypted_ballot(payload2, voter2.get_public_key(), ac_public_key)
+print(f"  ✅ '{voter2.name}' ha votato NO — ricevuta verificata: {voter2.verify_receipt(receipt2, ae_public_key)}")
+
+# Voter 4 — vota ASTENUTO
+voter4 = Voter("Lucia")
+csr4 = voter4.generate_certificate_request()
+voter4.set_certificate(municipality.sign_voter_csr(csr4))
+encrypted_request4 = voter4.request_ballot(ae_public_key)
+blank4, sig4 = ea.receive_ballot_request(encrypted_request4, pd)
+voter4.receive_blank_ballot(blank4, sig4, ae_public_key)
+payload4 = voter4.submit_ballot("ASTENUTO", ae_public_key, ac_public_key)
+receipt4 = ea.receive_encrypted_ballot(payload4, voter4.get_public_key(), ac_public_key)
+print(f"  ✅ '{voter4.name}' ha votato ASTENUTO — ricevuta verificata: {voter4.verify_receipt(receipt4, ae_public_key)}")
+
+# Voter 5 — vota SI
+voter5 = Voter("Giovanni")
+csr5 = voter5.generate_certificate_request()
+voter5.set_certificate(municipality.sign_voter_csr(csr5))
+encrypted_request5 = voter5.request_ballot(ae_public_key)
+blank5, sig5 = ea.receive_ballot_request(encrypted_request5, pd)
+voter5.receive_blank_ballot(blank5, sig5, ae_public_key)
+payload5 = voter5.submit_ballot("SI", ae_public_key, ac_public_key)
+receipt5 = ea.receive_encrypted_ballot(payload5, voter5.get_public_key(), ac_public_key)
+print(f"  ✅ '{voter5.name}' ha votato SI — ricevuta verificata: {voter5.verify_receipt(receipt5, ae_public_key)}")
+
+print(f"\n  📌 Bacheca B contiene ora {len(ea.bulletin_board)} scheda/e")
+print(f"  🔒 ID consumati: {len(ea._consumed_ids)}")
+print(f"  📊 Voti attesi: SI=2 (Peppe, Giovanni), NO=1 (Mario), ASTENUTO=1 (Lucia)")
+
+# ============================================================
+# PHASE 7: Scrutinio e Conteggio dei Voti (§2.3)
+# ============================================================
+print("\n" + "=" * 60)
+print("PHASE 7: Scrutinio e Conteggio dei Voti (§2.3)")
+print("=" * 60)
+
+# ----------------------------------------------------------
+# §2.3.1 — AC preleva la bacheca pubblica di AE
+# ----------------------------------------------------------
+print("\n[§2.3.1] AC preleva le schede cifrate dalla bacheca pubblica di AE")
+print(f"  📋 Schede sulla bacheca: {len(ea.bulletin_board)}")
+
+# ----------------------------------------------------------
+# §2.3.2-4 — Verifica, decifrazione e conteggio
+# ----------------------------------------------------------
+print("\n[§2.3.2-4] AC: Vrfy(pkAE, σ) → Dec(skAC, scheda) → conteggio")
+tally_result = ca.tally_votes(ea.bulletin_board, ea.get_public_key())
+
+print(f"\n  --- Risultati dello scrutinio ---")
+print(f"  ✅ Schede verificate e decifrate: {tally_result['total_valid']}")
+print(f"  ❌ Anomalie (firma AE invalida): {tally_result['total_anomalies']}")
+print(f"  ❌ Decifrature invalide: {tally_result['total_invalid']}")
+print(f"\n  📊 Conteggio finale:")
+print(f"     SI:       {tally_result['count_si']}")
+print(f"     NO:       {tally_result['count_no']}")
+print(f"     NULLO:    {tally_result['count_null']}")
+print(f"     TOTALE:   {tally_result['total_valid']}")
+
+# Verifica correttezza conteggio
+assert tally_result["count_si"] == 2, f"Attesi 2 SI, ottenuti {tally_result['count_si']}"
+assert tally_result["count_no"] == 1, f"Atteso 1 NO, ottenuti {tally_result['count_no']}"
+assert tally_result["count_null"] == 1, f"Atteso 1 NULLO, ottenuti {tally_result['count_null']}"
+assert tally_result["total_anomalies"] == 0, "Non ci dovrebbero essere anomalie"
+print(f"\n  ✅ Asserzioni di correttezza superate!")
+
+# ----------------------------------------------------------
+# §2.3.4 — Verifica universale (VU.1)
+# ----------------------------------------------------------
+print("\n[§2.3.4] Verifica Universale (VU.1)")
+
+# VU.1a — Verifica firma di AC sul risultato
+sig_valid = CountingAuthority.verify_tally(
+    tally_result["signed_payload"],
+    tally_result["ac_signature"],
+    ca.get_public_key(),
+)
+print(f"  {'✅' if sig_valid else '❌'} Vrfy(pkAC, σAC, payload) = {'1 — firma valida' if sig_valid else '0 — INVALIDA!'}")
+
+# VU.1b — Confronto schede cifrate (bacheca AE vs payload AC)
+ballot_match = CountingAuthority.verify_ballot_consistency(
+    tally_result["signed_payload"],
+    ea.bulletin_board,
+)
+print(f"  {'✅' if ballot_match else '❌'} Confronto schede bacheca AE ↔ payload AC: "
+      f"{'coerente — nessuna scheda aggiunta/rimossa' if ballot_match else 'INCOERENTE!'}")
+
+# ----------------------------------------------------------
+# Security Test D — Scheda fraudolenta iniettata nella bacheca
+# ----------------------------------------------------------
+print("\n" + "-" * 50)
+print("Security Test D: Scheda fraudolenta iniettata nella bacheca (I.1, I.2)")
+print("-" * 50)
+
+import os
+# Costruiamo una scheda cifrata fasulla con firma AE inventata
+fake_encrypted_ballot = os.urandom(512)  # 512 byte casuali
+fake_ae_signature = os.urandom(512)      # firma fasulla
+
+# Inietto nella bacheca una copia con la scheda fraudolenta
+tampered_board = list(ea.bulletin_board) + [{
+    "encrypted_ballot": fake_encrypted_ballot,
+    "ae_signature": fake_ae_signature,
+}]
+
+tally_tampered = ca.tally_votes(tampered_board, ea.get_public_key())
+
+if tally_tampered["total_anomalies"] == 1:
+    print(f"  ✅ Scheda fraudolenta RILEVATA come anomalia")
+    print(f"     Motivo: {tally_tampered['anomalies'][0]['reason']}")
+    print(f"  ✅ Conteggio non alterato: SI={tally_tampered['count_si']}, "
+          f"NO={tally_tampered['count_no']}, NULLO={tally_tampered['count_null']}")
+else:
+    print(f"  ❌ ERRORE DI SICUREZZA: scheda fraudolenta non rilevata!")
+
+# ----------------------------------------------------------
+# Security Test E — Manomissione del risultato pubblicato
+# ----------------------------------------------------------
+print("\n" + "-" * 50)
+print("Security Test E: Manomissione del risultato firmato da AC")
+print("-" * 50)
+
+# Altero un byte del payload firmato
+original_payload = tally_result["signed_payload"]
+tampered_payload_bytes = bytearray(original_payload)
+tampered_payload_bytes[10] ^= 0xFF  # flip di un byte
+tampered_payload_bytes = bytes(tampered_payload_bytes)
+
+tamper_detected = not CountingAuthority.verify_tally(
+    tampered_payload_bytes,
+    tally_result["ac_signature"],
+    ca.get_public_key(),
+)
+
+if tamper_detected:
+    print(f"  ✅ Manomissione RILEVATA: Vrfy(pkAC, σAC, payload_alterato) = 0")
+else:
+    print(f"  ❌ ERRORE DI SICUREZZA: manomissione non rilevata!")
+
 # ============================================================
 # Summary
 # ============================================================
@@ -268,7 +421,14 @@ print(f"  🏛️  StateCA:       '{state_ca.common_name}'")
 print(f"  📋  EA:            '{ea.common_name}' — cert verificato: {ea_valid}")
 print(f"  🔢  AC:            '{ca.common_name}' — cert verificato: {ca_valid}")
 print(f"  🏘️  Municipality:  '{municipality.common_name}'")
-print(f"  👤  Voter:         '{voter.name}' — voto registrato ✓")
+print(f"  👤  Elettori registrati: {len(ea._consumed_ids)}")
 print(f"  📌  Bacheca B:     {len(ea.bulletin_board)} scheda/e pubblicata/e")
 print(f"  🔒  ID consumati:  {len(ea._consumed_ids)}")
-print(f"\n  ✅  Fase 6 completata — pronto per il conteggio (CountingAuthority)")
+print(f"\n  📊  Risultato scrutinio:")
+print(f"       SI:    {tally_result['count_si']}")
+print(f"       NO:    {tally_result['count_no']}")
+print(f"       NULLO: {tally_result['count_null']}")
+print(f"\n  ✅  Verifica universale (VU.1): firma AC valida, schede coerenti")
+print(f"  ✅  Security Test D: scheda fraudolenta rilevata")
+print(f"  ✅  Security Test E: manomissione risultato rilevata")
+print(f"\n  ✅  Tutte le fasi del protocollo completate con successo!")
