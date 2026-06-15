@@ -114,13 +114,13 @@ csr_bench = x509.CertificateSigningRequestBuilder().subject_name(
 
 m_cert_sign_authority = measure(
     lambda: state_ca_bench.sign_authority_csr(csr_bench),
-    "Cert sign — authority (RSA-4096 CA → end-entity)", iterations=20
+    "Cert sign — authority (RSA-4096 CA -> end-entity)", iterations=20
 )
 print_metric(m_cert_sign_authority)
 
 m_cert_sign_municipality = measure(
     lambda: state_ca_bench.sign_municipality_csr(csr_bench),
-    "Cert sign — municipality (RSA-4096 CA → sub-CA)", iterations=20
+    "Cert sign — municipality (RSA-4096 CA -> sub-CA)", iterations=20
 )
 print_metric(m_cert_sign_municipality)
 
@@ -131,7 +131,7 @@ municipality_bench = MunicipalityCA("BenchMunicipality", state_ca_bench)
 
 m_cert_sign_voter = measure(
     lambda: municipality_bench.sign_voter_csr(csr_voter_bench),
-    "Cert sign — voter (RSA-4096 CA → end-entity 2048)", iterations=20
+    "Cert sign — voter (RSA-4096 CA -> end-entity 2048)", iterations=20
 )
 print_metric(m_cert_sign_voter)
 
@@ -300,7 +300,7 @@ m_mun = measure(
 )
 print_metric(m_mun)
 
-print("\n  [Phase 1 — Authorities Creation]")
+print("\n  [FASE 1 - Authorities Creation]")
 m_ea_create = measure(
     lambda: ElectoralAuthority("EA", sca_tmp),
     "Create EA (keygen + CSR + sign)", iterations=5
@@ -313,7 +313,7 @@ m_ca_create = measure(
 )
 print_metric(m_ca_create)
 
-print("\n  [Phase 5 — Voter Registration (keygen + CSR + sign)]")
+print("\n  [FASE 5 — Voter Registration (keygen + CSR + sign)]")
 
 
 def register_voter():

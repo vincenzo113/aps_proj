@@ -138,7 +138,7 @@ m_verify_ae_fail = measure(
 )
 print_metric(m_verify_ae_fail)
 
-# --- Decifrazione RSA-OAEP (scheda cifrata → ballot) ---
+# --- Decifrazione RSA-OAEP (scheda cifrata -> ballot) ---
 print("\n  [Decifrazione RSA-OAEP — skAC]")
 m_decrypt = measure(
     lambda: rsa_decrypt(sample_encrypted_ballot, ca._private_key),
@@ -239,7 +239,7 @@ for n in [10, 50, 100, 1000]:
 # =====================================================================
 print_header("3. LATENZA OPERAZIONI DI VERIFICA — Scrutinio")
 
-print("\n  [§2.3.2 — Verifica singola scheda (hash + verify firma AE)]")
+print("\n  [Verifica singola scheda (hash + verify firma AE)]")
 
 
 def verify_single_ballot():
@@ -252,7 +252,7 @@ m_verify_single = measure(verify_single_ballot,
                            "Verifica singola scheda (SHA-256 + Vrfy PSS)", iterations=100)
 print_metric(m_verify_single)
 
-print("\n  [§2.3.3 — Decifrazione singola scheda (decrypt + deserialize + convert)]")
+print("\n  [Decifrazione singola scheda (decrypt + deserialize + convert)]")
 
 
 def decrypt_single_ballot():
@@ -266,7 +266,7 @@ m_decrypt_single = measure(decrypt_single_ballot,
                             "Decifrazione singola (Dec + from_bytes + to_vote)", iterations=100)
 print_metric(m_decrypt_single)
 
-print("\n  [§2.3.4 — Verifica universale (VU.1)]")
+print("\n  [Verifica universale]")
 
 m_verify_tally = measure(
     lambda: CountingAuthority.verify_tally(
@@ -283,7 +283,7 @@ m_verify_consistency = measure(
         tally_result["signed_payload"],
         ea.bulletin_board
     ),
-    "Confronto schede (payload AC ↔ bacheca AE)", iterations=100
+    "Confronto schede (payload AC <-> bacheca AE)", iterations=100
 )
 print_metric(m_verify_consistency)
 
@@ -304,7 +304,7 @@ def full_universal_verification():
 
 
 m_full_vu = measure(full_universal_verification,
-                     "Verifica universale completa (VU.1)", iterations=100)
+                     "Verifica universale completa", iterations=100)
 print_metric(m_full_vu)
 
 print("\n  [Verifica individuale]")
@@ -389,7 +389,7 @@ for n_voters in [10, 50, 100]:
     print(f"  {n_voters:>4d} elettori:")
     print(f"       Scrutinio (verifica+decifrazione+conteggio): {t_tally:>10.2f} ms  "
           f"({per_ballot:.2f} ms/scheda)")
-    print(f"       Verifica universale (VU.1):                  {t_vu:>10.2f} ms")
+    print(f"       Verifica universale:                  {t_vu:>10.2f} ms")
     print(f"       TOTALE scrutinio + VU:                       {total:>10.2f} ms")
     print(f"       Risultato: SI={result['count_si']}, NO={result['count_no']}, "
           f"NULLO={result['count_null']}")

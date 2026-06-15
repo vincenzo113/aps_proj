@@ -195,7 +195,7 @@ class CountingAuthority:
         ac_signature: bytes,
         ac_public_key: RSAPublicKey,
     ) -> bool:
-        """Verifica universale del risultato pubblicato da AC (VU.1).
+        """Verifica universale del risultato pubblicato da AC.
 
         Un osservatore esterno può:
           1. Verificare la firma di AC sul payload pubblicato.
@@ -218,7 +218,7 @@ class CountingAuthority:
         bulletin_board: list[dict],
     ) -> bool:
         """Confronta le schede cifrate nel payload di AC con quelle
-        sulla bacheca pubblica di AE (parte della verifica universale VU.1).
+        sulla bacheca pubblica di AE (parte della verifica universale).
 
         Verifica che nessuna scheda sia stata aggiunta o rimossa da AC
         rispetto a quanto pubblicato da AE.
