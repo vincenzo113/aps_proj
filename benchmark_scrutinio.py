@@ -100,8 +100,8 @@ v1, _ = register_and_vote("Peppe", "SI")
 v2, _ = register_and_vote("Mario", "NO")
 v3, _ = register_and_vote("Lucia", "ASTENUTO")
 v4, _ = register_and_vote("Giovanni", "SI")
-print(f"  ✅ 4 elettori registrati — bacheca: {len(ea.bulletin_board)} schede")
-print(f"     Voti: SI=2, NO=1, ASTENUTO=1")
+print(f"4 elettori registrati — bacheca: {len(ea.bulletin_board)} schede")
+print(f"Voti: SI=2, NO=1, ASTENUTO=1")
 
 
 # =====================================================================

@@ -62,7 +62,7 @@ class CountingAuthority:
         return self._private_key.public_key()
 
     # ------------------------------------------------------------------
-    # §2.3 — Fase di Scrutinio e Conteggio dei Voti
+    # Fase di Scrutinio e Conteggio dei Voti
     # ------------------------------------------------------------------
 
     def tally_votes(
@@ -97,7 +97,7 @@ class CountingAuthority:
         """
         self.anomalies = []
 
-        # ----- §2.3.2  Verifica delle schede cifrate -----
+        # -----Verifica delle schede cifrate -----
         verified_ballots: list[bytes] = []
         all_encrypted_ballots: list[bytes] = []
         all_ae_signatures: list[bytes] = []
@@ -116,11 +116,11 @@ class CountingAuthority:
             else:
                 self.anomalies.append({
                     "index": idx,
-                    "reason": "Firma AE non valida: Vrfy(pkAE, σAE, Hash(schedacifrata)) ≠ 1",
+                    "reason": "Firma AE non valida: Vrfy(pkAE, σAE, Hash(schedacifrata)) != 1",
                     "type": "INVALID_AE_SIGNATURE",
                 })
 
-        # ----- §2.3.3  Decifrazione delle schede -----
+        # ----- Decifrazione delle schede -----
         votes: list[int] = []  # v ∈ {1, 0, -1}
         invalid_decryptions = 0
 
@@ -140,7 +140,7 @@ class CountingAuthority:
             except Exception:
                 invalid_decryptions += 1
 
-        # ----- §2.3.4  Conteggio e pubblicazione del risultato -----
+        # -----Conteggio e pubblicazione del risultato -----
         count_si = sum(1 for v in votes if v == 1)
         count_no = sum(1 for v in votes if v == 0)
         count_null = sum(1 for v in votes if v == -1)
@@ -186,7 +186,7 @@ class CountingAuthority:
         }
 
     # ------------------------------------------------------------------
-    # §2.3.4 — Verifica Universale (VU.1)
+    # Verifica Universale
     # ------------------------------------------------------------------
 
     @staticmethod
