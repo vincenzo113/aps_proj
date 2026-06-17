@@ -1,7 +1,7 @@
 """
 Ballot — scheda elettorale per referendum (SI / NO / ASTENUTO).
 
-Codifica del voto (§2.2.2, §2.3.3):
+Codifica del voto:
   v =  1  →  "SI"
   v =  0  →  "NO"
   v = -1  →  "ASTENUTO" (voto non espresso)
@@ -16,7 +16,7 @@ from typing import Optional
 VALID_CHOICES = {"SI", "NO", "ASTENUTO"}
 REFERENDUM_QUESTION = "Sei favorevole alla proposta di legge X?"
 
-# Mappatura scelta → valore intero binario (§2.2.2)
+# Mappatura scelta → valore intero binario 
 _CHOICE_TO_VALUE = {"SI": 1, "NO": 0, "ASTENUTO": -1}
 _VALUE_TO_CHOICE = {v: k for k, v in _CHOICE_TO_VALUE.items()}
 VALID_VOTE_VALUES = frozenset(_CHOICE_TO_VALUE.values())  # {1, 0, -1}
@@ -36,7 +36,7 @@ class Ballot:
     choice: Optional[str] = None  # None = blank ballot
 
     # ------------------------------------------------------------------
-    # Serialisation helpers
+    # Metodi di serializzazione
     # ------------------------------------------------------------------
 
     def to_bytes(self) -> bytes:
@@ -50,17 +50,17 @@ class Ballot:
         return cls(question=d["question"], choice=d.get("choice"))
 
     # ------------------------------------------------------------------
-    # Vote value encoding (§2.2.2, §2.3.3)
+    # Vote value encoding
     # ------------------------------------------------------------------
 
     def to_vote_value(self) -> int:
         """Converte la scelta in valore intero v ∈ {1, 0, -1}.
 
         Mappatura:
-          "SI"       →  1
-          "NO"       →  0
-          "ASTENUTO" → -1
-          None       → -1  (scheda vuota = voto non espresso)
+          "SI"       ->  1
+          "NO"       ->  0
+          "ASTENUTO" -> -1
+          None       -> -1  (scheda vuota = voto non espresso)
 
         Raises:
             ValueError: se choice non è una scelta valida.

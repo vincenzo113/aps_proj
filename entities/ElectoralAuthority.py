@@ -180,14 +180,14 @@ class ElectoralAuthority:
         #    Vrfy(pkEletore, encrypted_payload, σ_elettore) = 1
         if not verify_pss(voter_signature, encrypted_payload, voter_public_key):
             raise InvalidBallotSubmission(
-                "Firma dell'elettore non valida: la scheda potrebbe essere stata manomessa (I.1)"
+                "Firma dell'elettore non valida: la scheda potrebbe essere stata manomessa"
             )
 
         # 2. Controllo ID già consumato (anti double-voting, U.1)
         if voter_id in self._consumed_ids:
             raise InvalidBallotSubmission(
                 f"ID elettore '{voter_id}' già presente nella lista dei voti consumati "
-                "(tentativo di voto multiplo rilevato, U.1)"
+                "(tentativo di voto multiplo rilevato)"
             )
 
         # 3. Decifratura della busta esterna e verifica coerenza voter_id
@@ -201,7 +201,7 @@ class ElectoralAuthority:
 
         if inner_voter_id != voter_id:
             raise InvalidBallotSubmission(
-                "Mismatch voter_id: l'intestazione e il payload cifrato non concordano (I.1)"
+                "Mismatch voter_id: l'intestazione e il payload cifrato non concordano"
             )
 
         # 4. Dimensione attesa del crittogramma RSA-OAEP per pkAC

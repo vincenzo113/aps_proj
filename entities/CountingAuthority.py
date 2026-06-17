@@ -62,7 +62,7 @@ class CountingAuthority:
         return self._private_key.public_key()
 
     # ------------------------------------------------------------------
-    # §2.3 — Fase di Scrutinio e Conteggio dei Voti
+    # Fase di Scrutinio e Conteggio dei Voti
     # ------------------------------------------------------------------
 
     def tally_votes(
@@ -97,14 +97,16 @@ class CountingAuthority:
         """
         self.anomalies = []
 
-        # ----- §2.3.2  Verifica delle schede cifrate -----
+        # -----Verifica delle schede cifrate -----
         verified_ballots: list[bytes] = []
         all_encrypted_ballots: list[bytes] = []
+        all_ae_signatures: list[bytes] = []
 
         for idx, entry in enumerate(bulletin_board):
             encrypted_ballot = entry["encrypted_ballot"]
             ae_signature = entry["ae_signature"]
             all_encrypted_ballots.append(encrypted_ballot)
+            all_ae_signatures.append(ae_signature)
 
             # Vrfy(pkAE, σAE || schedacifrata) =? 1
             # La firma di AE è calcolata su Hash(encrypted_ballot)
@@ -114,11 +116,11 @@ class CountingAuthority:
             else:
                 self.anomalies.append({
                     "index": idx,
-                    "reason": "Firma AE non valida: Vrfy(pkAE, σAE, Hash(schedacifrata)) ≠ 1",
+                    "reason": "Firma AE non valida: Vrfy(pkAE, σAE, Hash(schedacifrata)) != 1",
                     "type": "INVALID_AE_SIGNATURE",
                 })
 
-        # ----- §2.3.3  Decifrazione delle schede -----
+        # ----- Decifrazione delle schede -----
         votes: list[int] = []  # v ∈ {1, 0, -1}
         invalid_decryptions = 0
 
@@ -138,7 +140,7 @@ class CountingAuthority:
             except Exception:
                 invalid_decryptions += 1
 
-        # ----- §2.3.4  Conteggio e pubblicazione del risultato -----
+        # -----Conteggio e pubblicazione del risultato -----
         count_si = sum(1 for v in votes if v == 1)
         count_no = sum(1 for v in votes if v == 0)
         count_null = sum(1 for v in votes if v == -1)
@@ -163,6 +165,9 @@ class CountingAuthority:
             "encrypted_ballots": [
                 base64.b64encode(eb).decode() for eb in all_encrypted_ballots
             ],
+            "ae_signatures": [
+                base64.b64encode(sig).decode() for sig in all_ae_signatures
+            ],
         }, ensure_ascii=False).encode()
 
         ac_signature = sign_pss(payload_data, self._private_key)
@@ -181,7 +186,7 @@ class CountingAuthority:
         }
 
     # ------------------------------------------------------------------
-    # §2.3.4 — Verifica Universale (VU.1)
+    # Verifica Universale
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -190,7 +195,7 @@ class CountingAuthority:
         ac_signature: bytes,
         ac_public_key: RSAPublicKey,
     ) -> bool:
-        """Verifica universale del risultato pubblicato da AC (VU.1).
+        """Verifica universale del risultato pubblicato da AC.
 
         Un osservatore esterno può:
           1. Verificare la firma di AC sul payload pubblicato.
@@ -213,7 +218,7 @@ class CountingAuthority:
         bulletin_board: list[dict],
     ) -> bool:
         """Confronta le schede cifrate nel payload di AC con quelle
-        sulla bacheca pubblica di AE (parte della verifica universale VU.1).
+        sulla bacheca pubblica di AE (parte della verifica universale).
 
         Verifica che nessuna scheda sia stata aggiunta o rimossa da AC
         rispetto a quanto pubblicato da AE.
@@ -238,5 +243,34 @@ class CountingAuthority:
             return all(
                 pb == bb for pb, bb in zip(payload_ballots, board_ballots)
             )
+        except Exception:
+            return False
+
+    @staticmethod
+    def verify_individual(
+        receipt: bytes,
+        signed_payload: bytes,
+    ) -> bool:
+        """Verificabilità individuale: l'elettore cerca la propria ricevuta
+        nella lista pubblicata da AC.
+
+        L'elettore possiede la ricevuta Sign(skAE, Hash(schedacifrata))
+        ricevuta da AE al momento del voto. Può cercarla nell'elenco delle
+        firme AE pubblicate da AC nel payload firmato, confermando che la
+        propria scheda cifrata è stata inclusa nello scrutinio.
+
+        Args:
+            receipt:        La ricevuta dell'elettore (bytes della firma AE).
+            signed_payload: Il payload pubblicato da AC (JSON bytes).
+
+        Returns:
+            True se la ricevuta è presente nella lista pubblicata, False altrimenti.
+        """
+        try:
+            payload_data = json.loads(signed_payload.decode())
+            published_signatures = [
+                base64.b64decode(sig) for sig in payload_data["ae_signatures"]
+            ]
+            return receipt in published_signatures
         except Exception:
             return False
