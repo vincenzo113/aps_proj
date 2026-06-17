@@ -312,7 +312,7 @@ print("=" * 60)
 # ----------------------------------------------------------
 # AC preleva la bacheca pubblica di AE
 # ----------------------------------------------------------
-print("\AC preleva le schede cifrate dalla bacheca pubblica di AE")
+print("AC preleva le schede cifrate dalla bacheca pubblica di AE")
 print(f"Schede sulla bacheca: {len(ea.bulletin_board)}")
 
 # ----------------------------------------------------------
